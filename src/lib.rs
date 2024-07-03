@@ -1017,7 +1017,7 @@ impl<'a> Tokenizer<'a> {
             }
         }
 
-        if !has_space {
+        /* if !has_space {
             if !s.at_end() {
                 return Err(StreamError::InvalidSpace(
                     s.curr_byte_unchecked(),
@@ -1026,16 +1026,45 @@ impl<'a> Tokenizer<'a> {
             } else {
                 return Err(StreamError::UnexpectedEndOfStream);
             }
-        }
+        } */
 
         let start = s.pos();
 
-        let (prefix, local) = s.consume_qname()?;
+        let (prefix, local) = match s.consume_qname() {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = s.consume_chars(|_, c| c != ' ' && c != '>' && c != '/');
+                return Err(e);
+            }
+        };
+
         s.consume_eq()?;
-        let quote = s.consume_quote()?;
+
+        let quote = match s.consume_quote() {
+            Ok(q) => q,
+            Err(e) => {
+                let _ = s.consume_chars(|_, c| c != ' ' && c != '>' && c != '/');
+                return Err(e);
+            }
+        };
+
         let quote_c = quote as char;
-        // The attribute value must not contain the < character.
-        let value = s.consume_chars(|_, c| c != quote_c)?;
+
+        let value = match s.consume_chars(|_, c| c != quote_c) {
+            Ok(v) => v,
+            Err(e) => {
+                for c in s.chars() {
+                    let byte = s.curr_byte_unchecked();
+                    s.advance(c.len_utf8());
+                    if byte == quote {
+                        break;
+                    }
+                }
+                return Err(e);
+            }
+        };
+
+        // TODO Check missing end quote?
         s.consume_byte(quote)?;
         let span = s.slice_back(start);
 
@@ -1083,9 +1112,22 @@ impl<'a> Iterator for Tokenizer<'a> {
             t = self.parse_next_impl();
         }
 
-        if let Some(Err(_)) = t {
-            self.stream.jump_to_end();
-            self.state = State::End;
+        if let Some(Err(e)) = t {
+            match e {
+                Error::InvalidDeclaration(_, _)
+                | Error::InvalidComment(_, _)
+                | Error::InvalidPI(_, _)
+                | Error::InvalidDoctype(_, _)
+                | Error::InvalidEntity(_, _)
+                | Error::InvalidCdata(_, _)
+                | Error::InvalidElement(_, _) // TODO someday forgive element errors too
+                | Error::InvalidCharData(_, _)
+                | Error::UnknownToken(_) => {
+                    self.stream.jump_to_end();
+                    self.state = State::End;
+                }
+                Error::InvalidAttribute(_, _) => (),
+            };
         }
 
         t

@@ -252,21 +252,24 @@ test!(
     attribute_err_01,
     "<c az=test>",
     Token::ElementStart("", "c", 0..2),
-    Token::Error("invalid attribute at 1:3 cause expected quote mark not 't' at 1:7".to_string())
+    Token::Error("invalid attribute at 1:3 cause expected quote mark not 't' at 1:7".to_string()),
+    Token::ElementEnd(ElementEnd::Open, 10..11)
 );
 
 test!(
     attribute_err_02,
     "<c a>",
     Token::ElementStart("", "c", 0..2),
-    Token::Error("invalid attribute at 1:3 cause expected \'=\' not \'>\' at 1:5".to_string())
+    Token::Error("invalid attribute at 1:3 cause expected \'=\' not \'>\' at 1:5".to_string()),
+    Token::ElementEnd(ElementEnd::Open, 4..5)
 );
 
 test!(
     attribute_err_03,
     "<c a/>",
     Token::ElementStart("", "c", 0..2),
-    Token::Error("invalid attribute at 1:3 cause expected '=' not '/' at 1:5".to_string())
+    Token::Error("invalid attribute at 1:3 cause expected '=' not '/' at 1:5".to_string()),
+    Token::ElementEnd(ElementEnd::Empty, 4..6)
 );
 
 test!(
@@ -274,7 +277,8 @@ test!(
     "<c a='b' q/>",
     Token::ElementStart("", "c", 0..2),
     Token::Attribute("", "a", "b", 3..8),
-    Token::Error("invalid attribute at 1:9 cause expected '=' not '/' at 1:11".to_string())
+    Token::Error("invalid attribute at 1:9 cause expected '=' not '/' at 1:11".to_string()),
+    Token::ElementEnd(ElementEnd::Empty, 10..12)
 );
 
 test!(
@@ -291,7 +295,8 @@ test!(
     Token::ElementStart("", "c", 0..2),
     Token::Error(
         "invalid attribute at 1:3 cause a non-XML character '\\u{1}' found at 1:7".to_string()
-    )
+    ),
+    Token::ElementEnd(ElementEnd::Empty, 8..10)
 );
 
 test!(
@@ -299,5 +304,16 @@ test!(
     "<c a='v'b='v'/>",
     Token::ElementStart("", "c", 0..2),
     Token::Attribute("", "a", "v", 3..8),
-    Token::Error("invalid attribute at 1:9 cause expected space not 'b' at 1:9".to_string())
+    Token::Attribute("", "b", "v", 8..13),
+    Token::ElementEnd(ElementEnd::Empty, 13..15)
+);
+
+test!(
+    attribute_err_08,
+    "<c a='v b='v'>",
+    Token::ElementStart("", "c", 0..2),
+    Token::Attribute("", "a", "v b=", 3..11),
+    Token::Error("invalid attribute at 1:12 cause expected '=' not ''' at 1:13".to_string()),
+    Token::Error("invalid attribute at 1:13 cause invalid name token".to_string()),
+    Token::ElementEnd(ElementEnd::Open, 13..14)
 );
