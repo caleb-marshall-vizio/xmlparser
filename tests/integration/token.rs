@@ -46,7 +46,7 @@ macro_rules! test {
                 let t = p.next().unwrap();
                 assert_eq!(to_test_token(t), $token);
             )*
-            assert!(p.next().is_none());
+            assert_eq!(p.next(), None);
         }
     )
 }
