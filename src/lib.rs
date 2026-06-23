@@ -519,8 +519,11 @@ impl<'a> Tokenizer<'a> {
                 } else if s.starts_with(b"<!") {
                     Some(Err(Error::UnknownToken(s.gen_text_pos())))
                 } else if s.starts_with(b"<") {
-                    self.state = State::Attributes;
-                    Some(Self::parse_element_start(s))
+                    let t = Self::parse_element_start(s);
+                    if t.is_ok() {
+                        self.state = State::Attributes;
+                    }
+                    Some(t)
                 } else if s.starts_with_space() {
                     s.skip_spaces();
                     None
@@ -549,21 +552,30 @@ impl<'a> Tokenizer<'a> {
                             }
                         }
                         Ok(b'/') => {
-                            if self.depth > 0 {
-                                self.depth -= 1;
-                            }
+                            let t = Self::parse_close_element(s);
+                            if t.is_ok() {
+                                if self.depth > 0 {
+                                    self.depth -= 1;
+                                }
 
-                            if self.depth == 0 && !self.fragment_parsing {
-                                self.state = State::AfterElements;
-                            } else {
-                                self.state = State::Elements;
+                                if self.depth == 0 && !self.fragment_parsing {
+                                    self.state = State::AfterElements;
+                                } else {
+                                    self.state = State::Elements;
+                                }
                             }
-
-                            Some(Self::parse_close_element(s))
+                            // On error, depth and state are unchanged — the recovery
+                            // in parse_close_element already skipped past '>'.
+                            Some(t)
                         }
                         Ok(_) => {
-                            self.state = State::Attributes;
-                            Some(Self::parse_element_start(s))
+                            let t = Self::parse_element_start(s);
+                            if t.is_ok() {
+                                self.state = State::Attributes;
+                            }
+                            // On error, state stays Elements — the recovery in
+                            // parse_element_start already skipped past '>'.
+                            Some(t)
                         }
                         Err(_) => Some(Err(Error::UnknownToken(s.gen_text_pos()))),
                     },
@@ -948,7 +960,17 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn parse_element_start(s: &mut Stream<'a>) -> Result<Token<'a>> {
-        map_err_at!(Self::parse_element_start_impl(s), s, InvalidElement)
+        let start = s.pos();
+        Self::parse_element_start_impl(s).map_err(|e| {
+            // Skip to '>' or '<' so the tokenizer can continue. We stop at '<'
+            // too, because a broken element like `<\n` has no closing '>' — the
+            // next '<' belongs to a different element.
+            s.skip_bytes(|_, c| c != b'>' && c != b'<');
+            if !s.at_end() && s.curr_byte_unchecked() == b'>' {
+                s.advance(1); // consume the '>'
+            }
+            Error::InvalidElement(e, s.gen_text_pos_from(start))
+        })
     }
 
     // '<' Name (S Attribute)* S? '>'
@@ -966,7 +988,15 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn parse_close_element(s: &mut Stream<'a>) -> Result<Token<'a>> {
-        map_err_at!(Self::parse_close_element_impl(s), s, InvalidElement)
+        let start = s.pos();
+        Self::parse_close_element_impl(s).map_err(|e| {
+            // Skip to '>' or '<' so the tokenizer can continue.
+            s.skip_bytes(|_, c| c != b'>' && c != b'<');
+            if !s.at_end() && s.curr_byte_unchecked() == b'>' {
+                s.advance(1); // consume the '>'
+            }
+            Error::InvalidElement(e, s.gen_text_pos_from(start))
+        })
     }
 
     // '</' Name S? '>'
@@ -988,8 +1018,8 @@ impl<'a> Tokenizer<'a> {
 
     // Name Eq AttValue
     fn parse_attribute(s: &mut Stream<'a>) -> StreamResult<Token<'a>> {
-        let attr_start = s.pos();
-        let has_space = s.starts_with_space();
+        let _attr_start = s.pos();
+        let _has_space = s.starts_with_space();
         s.skip_spaces();
 
         if let Ok(c) = s.curr_byte() {
@@ -1038,7 +1068,13 @@ impl<'a> Tokenizer<'a> {
             }
         };
 
-        s.consume_eq()?;
+        if let Err(e) = s.consume_eq() {
+            // consume_eq already skipped spaces and is positioned at the
+            // non-'=' character. Don't skip further — just return the error
+            // so the next parse_attribute call can try this position as a
+            // new attribute name.
+            return Err(e);
+        }
 
         let quote = match s.consume_quote() {
             Ok(q) => q,
@@ -1120,13 +1156,14 @@ impl<'a> Iterator for Tokenizer<'a> {
                 | Error::InvalidDoctype(_, _)
                 | Error::InvalidEntity(_, _)
                 | Error::InvalidCdata(_, _)
-                | Error::InvalidElement(_, _) // TODO someday forgive element errors too
                 | Error::InvalidCharData(_, _)
                 | Error::UnknownToken(_) => {
                     self.stream.jump_to_end();
                     self.state = State::End;
                 }
-                Error::InvalidAttribute(_, _) => (),
+                // Element and attribute errors are non-fatal: the parse_*
+                // functions skip past the bad token, so we can keep going.
+                Error::InvalidElement(_, _) | Error::InvalidAttribute(_, _) => (),
             };
         }
 

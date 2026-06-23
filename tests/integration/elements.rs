@@ -86,7 +86,8 @@ test!(
 test!(
     element_err_05,
     "<<",
-    Token::Error("invalid element at 1:1 cause invalid name token".to_string())
+    Token::Error("invalid element at 1:1 cause invalid name token".to_string()),
+    Token::Error("invalid element at 1:2 cause invalid name token".to_string())
 );
 
 test!(
@@ -129,7 +130,8 @@ test!(
     "<a></br/></a>",
     Token::ElementStart("", "a", 0..2),
     Token::ElementEnd(ElementEnd::Open, 2..3),
-    Token::Error("invalid element at 1:4 cause expected '>' not '/' at 1:8".to_string())
+    Token::Error("invalid element at 1:4 cause expected '>' not '/' at 1:8".to_string()),
+    Token::ElementEnd(ElementEnd::Close("", "a"), 9..13)
 );
 
 test!(
@@ -316,4 +318,56 @@ test!(
     Token::Error("invalid attribute at 1:12 cause expected '=' not ''' at 1:13".to_string()),
     Token::Error("invalid attribute at 1:13 cause invalid name token".to_string()),
     Token::ElementEnd(ElementEnd::Open, 13..14)
+);
+
+// Element error recovery: invalid element start should not kill the tokenizer.
+// The parser skips to '<' or '>' and continues parsing the rest of the document.
+test!(
+    element_recovery_01,
+    "<root><\n</root>",
+    Token::ElementStart("", "root", 0..5),
+    Token::ElementEnd(ElementEnd::Open, 5..6),
+    Token::Error("invalid element at 1:7 cause invalid name token".to_string()),
+    Token::ElementEnd(ElementEnd::Close("", "root"), 8..15)
+);
+
+// Typing `<` inside an element should not prevent the rest from parsing.
+test!(
+    element_recovery_02,
+    "<root>< </root>",
+    Token::ElementStart("", "root", 0..5),
+    Token::ElementEnd(ElementEnd::Open, 5..6),
+    Token::Error("invalid element at 1:7 cause invalid name token".to_string()),
+    Token::ElementEnd(ElementEnd::Close("", "root"), 8..15)
+);
+
+// Multiple bad elements should each recover independently.
+test!(
+    element_recovery_03,
+    "<root><><></root>",
+    Token::ElementStart("", "root", 0..5),
+    Token::ElementEnd(ElementEnd::Open, 5..6),
+    Token::Error("invalid element at 1:7 cause invalid name token".to_string()),
+    Token::Error("invalid element at 1:9 cause invalid name token".to_string()),
+    Token::ElementEnd(ElementEnd::Close("", "root"), 10..17)
+);
+
+// Invalid close element should recover and continue.
+test!(
+    element_recovery_04,
+    "<root></></root>",
+    Token::ElementStart("", "root", 0..5),
+    Token::ElementEnd(ElementEnd::Open, 5..6),
+    Token::Error("invalid element at 1:7 cause invalid name token".to_string()),
+    Token::ElementEnd(ElementEnd::Close("", "root"), 9..16)
+);
+
+// Attribute with missing '=' should recover and continue to next attribute.
+test!(
+    attribute_recovery_01,
+    "<c a b='v'/>",
+    Token::ElementStart("", "c", 0..2),
+    Token::Error("invalid attribute at 1:3 cause expected '=' not 'b' at 1:6".to_string()),
+    Token::Attribute("", "b", "v", 5..10),
+    Token::ElementEnd(ElementEnd::Empty, 10..12)
 );
